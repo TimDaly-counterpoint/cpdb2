@@ -1,0 +1,13 @@
+# Compiled binaries and test files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Environment variables and IDE files
+.env
+.vscode/
+.idea/
