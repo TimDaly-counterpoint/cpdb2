@@ -59,7 +59,7 @@ func main() {
 		fmt.Println("9.  Smooth dissonance passages (smoothcp)")
 		fmt.Println("10. Export smoothed table to MusicXML")
 		fmt.Println("11. Export sequence search results to MusicXML")
-		fmt.Println("12. Calculate sonority distributions")
+		fmt.Println("12. Recreate sonority, dissonance, and consonant tables (process_sonority)")
 		fmt.Println("0.  Exit")
 		fmt.Println("=================================================")
 
@@ -98,8 +98,8 @@ func main() {
 
 		case 3:
 			fmt.Println("\n--- Search Sequences ---")
-			pieces, _ := prompt.PromptIntList(reader, "Enter piece IDs (comma-separated, empty for all)")
-			voices, _ := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated, empty for all)")
+			pieces, _ := prompt.PromptIntList(reader, "Enter piece IDs (comma-separated or ranges e.g. 1-3, empty for all)")
+			voices, _ := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 			x, _ := prompt.PromptInt(reader, "Enter minimum sequence length (x)", 10)
 			y, _ := prompt.PromptInt(reader, "Enter minimum occurrences (y)", 2)
 			excludeSame, _ := prompt.PromptBool(reader, "Exclude sequences from same piece only?", false)
@@ -120,8 +120,8 @@ func main() {
 		case 4:
 			fmt.Println("\n--- Search Cross-Piece Sequences ---")
 			src, _ := prompt.PromptInt(reader, "Enter source piece ID", 1)
-			targets, _ := prompt.PromptIntList(reader, "Enter target piece IDs (empty for all others)")
-			voices, _ := prompt.PromptIntList(reader, "Enter voice numbers (empty for all)")
+			targets, _ := prompt.PromptIntList(reader, "Enter target piece IDs (comma-separated or ranges e.g. 1-3, empty for all others)")
+			voices, _ := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 			x, _ := prompt.PromptInt(reader, "Enter minimum sequence length (x)", 10)
 			defFile := fmt.Sprintf("CrossPiece_%d_%s.txt", src, time.Now().Format("20060102_150405"))
 			outFile, _ := prompt.PromptString(reader, "Enter output filename", defFile)
@@ -152,8 +152,8 @@ func main() {
 			}
 			_, _ = score.ImportScores(ctx, database, pats...)
 
-			pieces, _ := prompt.PromptIntList(reader, "Enter piece IDs (empty for all)")
-			voices, _ := prompt.PromptIntList(reader, "Enter voice numbers (empty for all)")
+			pieces, _ := prompt.PromptIntList(reader, "Enter piece IDs (comma-separated or ranges e.g. 1-3, empty for all)")
+			voices, _ := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 			x, _ := prompt.PromptInt(reader, "Enter minimum sequence length (x)", 10)
 			y, _ := prompt.PromptInt(reader, "Enter minimum occurrences (y)", 2)
 			excludeSame, _ := prompt.PromptBool(reader, "Exclude sequences from same piece only?", false)
@@ -196,7 +196,7 @@ func main() {
 
 		case 10:
 			fmt.Println("\n--- Export Smoothed Table to MusicXML ---")
-			if err := exportxml.RunInteractive(ctx, database, reader, "patterns.txt"); err != nil {
+			if err := exportxml.RunInteractiveSmooth(ctx, database, reader); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			}
 
@@ -207,7 +207,7 @@ func main() {
 			}
 
 		case 12:
-			fmt.Println("\n--- Calculate Sonority Distributions ---")
+			fmt.Println("\n--- Recreate Sonority, Dissonance, and Consonant Tables ---")
 			if err := sonority.RunInteractive(ctx, database, reader); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			}

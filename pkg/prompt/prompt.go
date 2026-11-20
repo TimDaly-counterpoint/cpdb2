@@ -45,7 +45,88 @@ func PromptInt(reader *bufio.Reader, label string, defaultValue int) (int, error
 	return v, nil
 }
 
-// PromptIntList asks for a list of integers (comma- or space-separated).
+// ParseIntList parses a string containing a list of integers, ranges (e.g. "1-5"), or a combination,
+// separated by commas or spaces.
+func ParseIntList(input string) ([]int, error) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	var sb strings.Builder
+	runes := []rune(trimmed)
+	n := len(runes)
+	for i := 0; i < n; i++ {
+		r := runes[i]
+		if r == ',' {
+			sb.WriteRune(' ')
+		} else if r == '-' {
+			s := sb.String()
+			trimmedEnd := strings.TrimRight(s, " \t")
+			if len(trimmedEnd) > 0 {
+				sb.Reset()
+				sb.WriteString(trimmedEnd)
+			}
+			sb.WriteRune('-')
+			for i+1 < n && (runes[i+1] == ' ' || runes[i+1] == '\t') {
+				i++
+			}
+		} else {
+			sb.WriteRune(r)
+		}
+	}
+
+	parts := strings.Fields(sb.String())
+	var result []int
+
+	for _, p := range parts {
+		if strings.Contains(p, "-") {
+			dashIdx := strings.Index(p, "-")
+			if dashIdx == 0 && !strings.Contains(p[1:], "-") {
+				v, err := strconv.Atoi(p)
+				if err != nil {
+					return nil, fmt.Errorf("invalid integer '%s': %w", p, err)
+				}
+				result = append(result, v)
+				continue
+			}
+
+			subParts := strings.Split(p, "-")
+			if len(subParts) == 2 && subParts[0] != "" && subParts[1] != "" {
+				start, err1 := strconv.Atoi(subParts[0])
+				end, err2 := strconv.Atoi(subParts[1])
+				if err1 != nil || err2 != nil {
+					return nil, fmt.Errorf("invalid integer range '%s'", p)
+				}
+				if start <= end {
+					for i := start; i <= end; i++ {
+						result = append(result, i)
+					}
+				} else {
+					for i := start; i >= end; i-- {
+						result = append(result, i)
+					}
+				}
+				continue
+			}
+
+			v, err := strconv.Atoi(p)
+			if err != nil {
+				return nil, fmt.Errorf("invalid integer or range '%s'", p)
+			}
+			result = append(result, v)
+		} else {
+			v, err := strconv.Atoi(p)
+			if err != nil {
+				return nil, fmt.Errorf("invalid integer '%s': %w", p, err)
+			}
+			result = append(result, v)
+		}
+	}
+	return result, nil
+}
+
+// PromptIntList asks for a list of integers or ranges (comma- or space-separated).
 func PromptIntList(reader *bufio.Reader, label string) ([]int, error) {
 	fmt.Printf("%s: ", label)
 	line, err := reader.ReadString('\n')
@@ -56,19 +137,7 @@ func PromptIntList(reader *bufio.Reader, label string) ([]int, error) {
 	if trimmed == "" {
 		return nil, nil
 	}
-
-	// Replace commas with spaces and split fields
-	cleaned := strings.ReplaceAll(trimmed, ",", " ")
-	parts := strings.Fields(cleaned)
-	var result []int
-	for _, p := range parts {
-		v, err := strconv.Atoi(p)
-		if err != nil {
-			return nil, fmt.Errorf("invalid integer '%s': %w", p, err)
-		}
-		result = append(result, v)
-	}
-	return result, nil
+	return ParseIntList(trimmed)
 }
 
 // PromptBool asks for a boolean value (y/n, yes/no, true/false) with a default fallback.

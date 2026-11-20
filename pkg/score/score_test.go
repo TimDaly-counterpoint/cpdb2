@@ -1,8 +1,13 @@
 package score
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
+
+	"cpdb2/pkg/db"
+	"cpdb2/pkg/setdb"
 )
 
 func TestLoadMEIFiles(t *testing.T) {
@@ -110,5 +115,76 @@ func TestFindFilesByPatterns(t *testing.T) {
 	}
 	if len(files) == 0 {
 		t.Log("No test files found at relative path")
+	}
+}
+
+func TestImportScores_Integration(t *testing.T) {
+	files, err := filepath.Glob("../../input/*.musicxml")
+	if err != nil || len(files) == 0 {
+		files, _ = filepath.Glob("input/*.musicxml")
+	}
+	if len(files) == 0 {
+		t.Skip("no input musicxml files found")
+	}
+
+	testDBName := "test_import_scores_temp"
+	ctx := context.Background()
+
+	postgresConn := db.ResolveConnString("postgres")
+	adminDB, err := db.NewDB(ctx, "postgres")
+	if err != nil {
+		t.Skipf("PostgreSQL server not available: %v", err)
+	}
+	defer adminDB.Close()
+
+	_, _ = adminDB.Pool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", testDBName))
+	if _, err := adminDB.Pool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", testDBName)); err != nil {
+		t.Skipf("cannot create test database: %v", err)
+	}
+	defer func() {
+		cleanupDB, err := db.NewDB(ctx, "postgres")
+		if err == nil {
+			_, _ = cleanupDB.Pool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", testDBName))
+			cleanupDB.Close()
+		}
+	}()
+
+	_ = postgresConn
+	if err := setdb.SetDB(ctx, testDBName); err != nil {
+		t.Fatalf("SetDB failed: %v", err)
+	}
+
+	targetDB, err := db.NewDB(ctx, testDBName)
+	if err != nil {
+		t.Fatalf("Connect to %s: %v", testDBName, err)
+	}
+	defer targetDB.Close()
+
+	// Import first 2 score files
+	testPatterns := files[:min(2, len(files))]
+	count, err := ImportScores(ctx, targetDB, testPatterns...)
+	if err != nil {
+		t.Fatalf("ImportScores failed: %v", err)
+	}
+	if count == 0 {
+		t.Fatalf("expected at least 1 imported score, got 0")
+	}
+
+	var noteCount int
+	err = targetDB.Pool.QueryRow(ctx, "SELECT count(*) FROM notes").Scan(&noteCount)
+	if err != nil {
+		t.Fatalf("query notes count: %v", err)
+	}
+	if noteCount == 0 {
+		t.Fatalf("expected notes in database, got 0")
+	}
+
+	var pieceCount int
+	err = targetDB.Pool.QueryRow(ctx, "SELECT count(*) FROM pieces").Scan(&pieceCount)
+	if err != nil {
+		t.Fatalf("query pieces count: %v", err)
+	}
+	if pieceCount != count {
+		t.Fatalf("expected %d pieces, got %d", count, pieceCount)
 	}
 }

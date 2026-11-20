@@ -40,7 +40,7 @@ The following binaries are built and placed in `tools/`:
 - **`find_tritones`**: Identification of tritone occurrences in dissonant sonorities.
 - **`import_and_search`**: Combined workflow for score ingestion and immediate sequence search.
 - **`import_scores`**: Ingestion of MusicXML, MEI, and LilyPond score files.
-- **`process_sonority`**: Vertical sonority intervals, overlap durations, and distribution calculations.
+- **`process_sonority`**: Recreates and populates `sonority`, `dissonance`, and `consonant` tables for all pieces in the database.
 - **`search_cross_piece`**: Cross-piece melodic pattern and sequence search.
 - **`search_sequences`**: Corpus-wide repeated melodic sequence search.
 - **`set_db`**: Automated empty database setup, schema import (`template.sql`), and `voces` table population (`voces.sql`).

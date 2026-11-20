@@ -399,7 +399,7 @@ func RunInteractive(ctx context.Context, database *db.DB, reader *bufio.Reader) 
 		return err
 	}
 
-	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated, empty for all)")
+	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 	if err != nil {
 		return err
 	}

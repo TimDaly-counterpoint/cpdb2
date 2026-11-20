@@ -43,12 +43,12 @@ func main() {
 		log.Fatalf("Invalid source piece ID: %v", err)
 	}
 
-	targetPieces, err := prompt.PromptIntList(reader, "Enter target piece IDs (comma-separated, empty for all other pieces)")
+	targetPieces, err := prompt.PromptIntList(reader, "Enter target piece IDs (comma-separated or ranges e.g. 1-3, empty for all other pieces)")
 	if err != nil {
 		log.Fatalf("Invalid target pieces: %v", err)
 	}
 
-	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated, empty for all)")
+	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 	if err != nil {
 		log.Fatalf("Invalid voice numbers: %v", err)
 	}

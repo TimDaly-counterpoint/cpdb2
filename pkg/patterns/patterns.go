@@ -329,87 +329,164 @@ func (f *SequenceFinder) FindRepeatedSubstrings(x, y int, excludeSamePiece bool)
 		entryIdx int
 		offset   int
 	}
-	substringMap := make(map[seqKey][]occRef)
-	canon := make(map[seqKey][]int)
 
+	var pieceIDs []int
+	pieceSeen := make(map[int]bool)
+	for _, e := range f.entries {
+		if !pieceSeen[e.piece] {
+			pieceSeen[e.piece] = true
+			pieceIDs = append(pieceIDs, e.piece)
+		}
+	}
+
+	pieceEntries := make(map[int][]int)
 	for ei, e := range f.entries {
-		L := len(e.values)
-		for start := 0; start+x <= L; start++ {
-			for length := x; start+length <= L; length++ {
-				sub := e.values[start : start+length]
-				k := keyOf(sub)
-				if _, ok := canon[k]; !ok {
-					c := make([]int, length)
-					copy(c, sub)
-					canon[k] = c
+		pieceEntries[e.piece] = append(pieceEntries[e.piece], ei)
+	}
+
+	var allResults []SequenceResult
+	seenKeys := make(map[seqKey]bool)
+
+	for i, srcPiece := range pieceIDs {
+		srcEntryIndices := pieceEntries[srcPiece]
+		sourceOccs := make(map[seqKey][]occRef)
+		sourceCanon := make(map[seqKey][]int)
+
+		for _, ei := range srcEntryIndices {
+			e := f.entries[ei]
+			L := len(e.values)
+			for start := 0; start+x <= L; start++ {
+				for length := x; start+length <= L; length++ {
+					sub := e.values[start : start+length]
+					k := keyOf(sub)
+					if _, ok := sourceCanon[k]; !ok {
+						c := make([]int, length)
+						copy(c, sub)
+						sourceCanon[k] = c
+					}
+					sourceOccs[k] = append(sourceOccs[k], occRef{ei, start})
 				}
-				substringMap[k] = append(substringMap[k], occRef{ei, start})
 			}
 		}
-	}
 
-	var results []SequenceResult
-	for k, occs := range substringMap {
-		if len(occs) < y {
+		if len(sourceOccs) == 0 {
 			continue
 		}
-		occurrences := make([]SequenceOccurrence, 0, len(occs))
-		pieces := make(map[int]struct{})
-		for _, o := range occs {
-			e := f.entries[o.entryIdx]
-			startNote, endNote := getOccurrenceBoundaryNotes(e, o.offset, len(canon[k]))
-			occurrences = append(occurrences, SequenceOccurrence{
-				Piece:      e.piece,
-				Voice:      e.voice,
-				ListType:   e.listType,
-				Offset:     o.offset,
-				Bar:        startNote.Bar,
-				Index:      startNote.Index,
-				Pitch:      startNote.Pitch,
-				Toffset:    startNote.Toffset,
-				EndBar:     endNote.Bar,
-				EndIndex:   endNote.Index,
-				EndPitch:   endNote.Pitch,
-				EndToffset: endNote.Toffset,
+
+		targetOccs := make(map[seqKey][]occRef)
+		for j := i + 1; j < len(pieceIDs); j++ {
+			tgtPiece := pieceIDs[j]
+			for _, ei := range pieceEntries[tgtPiece] {
+				e := f.entries[ei]
+				L := len(e.values)
+				for start := 0; start+x <= L; start++ {
+					for length := x; start+length <= L; length++ {
+						sub := e.values[start : start+length]
+						k := keyOf(sub)
+						if _, exists := sourceOccs[k]; !exists {
+							break
+						}
+						targetOccs[k] = append(targetOccs[k], occRef{ei, start})
+					}
+				}
+			}
+		}
+
+		for k, sOccs := range sourceOccs {
+			if seenKeys[k] {
+				continue
+			}
+			seenKeys[k] = true
+
+			tOccs := targetOccs[k]
+			totalCount := len(sOccs) + len(tOccs)
+			if totalCount < y {
+				continue
+			}
+
+			if excludeSamePiece {
+				piecesMap := make(map[int]struct{})
+				for _, o := range sOccs {
+					piecesMap[f.entries[o.entryIdx].piece] = struct{}{}
+				}
+				for _, o := range tOccs {
+					piecesMap[f.entries[o.entryIdx].piece] = struct{}{}
+				}
+				if len(piecesMap) < 2 {
+					continue
+				}
+			}
+
+			seqLen := len(sourceCanon[k])
+			occurrences := make([]SequenceOccurrence, 0, totalCount)
+			for _, o := range sOccs {
+				e := f.entries[o.entryIdx]
+				startNote, endNote := getOccurrenceBoundaryNotes(e, o.offset, seqLen)
+				occurrences = append(occurrences, SequenceOccurrence{
+					Piece:      e.piece,
+					Voice:      e.voice,
+					ListType:   e.listType,
+					Offset:     o.offset,
+					Bar:        startNote.Bar,
+					Index:      startNote.Index,
+					Pitch:      startNote.Pitch,
+					Toffset:    startNote.Toffset,
+					EndBar:     endNote.Bar,
+					EndIndex:   endNote.Index,
+					EndPitch:   endNote.Pitch,
+					EndToffset: endNote.Toffset,
+				})
+			}
+			for _, o := range tOccs {
+				e := f.entries[o.entryIdx]
+				startNote, endNote := getOccurrenceBoundaryNotes(e, o.offset, seqLen)
+				occurrences = append(occurrences, SequenceOccurrence{
+					Piece:      e.piece,
+					Voice:      e.voice,
+					ListType:   e.listType,
+					Offset:     o.offset,
+					Bar:        startNote.Bar,
+					Index:      startNote.Index,
+					Pitch:      startNote.Pitch,
+					Toffset:    startNote.Toffset,
+					EndBar:     endNote.Bar,
+					EndIndex:   endNote.Index,
+					EndPitch:   endNote.Pitch,
+					EndToffset: endNote.Toffset,
+				})
+			}
+
+			allResults = append(allResults, SequenceResult{
+				Sequence:    sourceCanon[k],
+				Count:       len(occurrences),
+				Occurrences: occurrences,
 			})
-			pieces[e.piece] = struct{}{}
 		}
-		if excludeSamePiece && len(pieces) < 2 {
-			continue
-		}
-		if len(occurrences) < y {
-			continue
-		}
-		results = append(results, SequenceResult{
-			Sequence:    canon[k],
-			Count:       len(occurrences),
-			Occurrences: occurrences,
-		})
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		return len(results[i].Sequence) > len(results[j].Sequence)
+	sort.Slice(allResults, func(i, j int) bool {
+		return len(allResults[i].Sequence) > len(allResults[j].Sequence)
 	})
 
-	maximal := make([]SequenceResult, 0, len(results))
-	for i := range results {
+	maximal := make([]SequenceResult, 0, len(allResults))
+	for i := range allResults {
 		isMax := true
-		cur := results[i].Sequence
-		for j := range results {
+		cur := allResults[i].Sequence
+		for j := range allResults {
 			if i == j {
 				continue
 			}
-			other := results[j].Sequence
+			other := allResults[j].Sequence
 			if len(other) <= len(cur) {
 				continue
 			}
-			if containsSubseq(other, cur) && results[j].Count >= results[i].Count {
+			if containsSubseq(other, cur) && allResults[j].Count >= allResults[i].Count {
 				isMax = false
 				break
 			}
 		}
 		if isMax {
-			maximal = append(maximal, results[i])
+			maximal = append(maximal, allResults[i])
 		}
 	}
 	return maximal
@@ -574,13 +651,21 @@ func getOccurrenceBoundaryNotes(e stringEntry, offset, length int) (startNote, e
 		if lastVal != 0 && lastNoteIdx+1 < len(e.notes) {
 			endNote = e.notes[lastNoteIdx+1]
 		} else {
-			endNote = e.notes[lastNoteIdx]
+			k := lastNoteIdx
+			for k+1 < len(e.notes) && (e.notes[k+1].Pitch == "0" || e.notes[k+1].Pitch == "") {
+				k++
+			}
+			endNote = e.notes[k]
 		}
 	} else {
 		if lastVal != 0 && lastNoteIdx-1 >= 0 {
 			endNote = e.notes[lastNoteIdx-1]
 		} else {
-			endNote = e.notes[lastNoteIdx]
+			k := lastNoteIdx
+			for k-1 >= 0 && (e.notes[k-1].Pitch == "0" || e.notes[k-1].Pitch == "") {
+				k--
+			}
+			endNote = e.notes[k]
 		}
 	}
 	return startNote, endNote

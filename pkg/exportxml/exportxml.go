@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -485,7 +487,7 @@ func GenerateMusicXML(workTitle string, occs []patterns.SequenceOccurrence, occN
 					if durChunk > spaceChunk {
 						durChunk = spaceChunk
 					}
-					isMore := (remTail - durChunk > 0)
+					isMore := (remTail-durChunk > 0)
 					writeNote(n, durChunk, isMore, true)
 					remTail -= durChunk
 					currentMeasurePos += durChunk
@@ -644,5 +646,352 @@ func RunInteractive(ctx context.Context, database *db.DB, reader *bufio.Reader, 
 	}
 
 	fmt.Printf("Successfully exported %d MusicXML files to %s\n", len(files), outDir)
+	return nil
+}
+
+// ConsonantSonority represents a single sonority row from the consonant table.
+type ConsonantSonority struct {
+	Offset     int
+	Duration   int
+	Pitches    []string
+	MidiValues []int
+	Voices     []int
+}
+
+func writePartMeasures(sb *strings.Builder, notes []db.SequenceNote) {
+	const divisions = 24
+	const measureCapacity = 12 * divisions
+
+	currentMeasureNum := 1
+	currentMeasurePos := 0
+	measureOpened := false
+
+	writeMeasureStart := func(mNum int) {
+		fmt.Fprintf(sb, "    <measure number=\"%d\">\n", mNum)
+		if mNum == 1 {
+			sb.WriteString("      <attributes>\n")
+			fmt.Fprintf(sb, "        <divisions>%d</divisions>\n", divisions)
+			sb.WriteString("        <time>\n")
+			sb.WriteString("          <beats>12</beats>\n")
+			sb.WriteString("          <beat-type>4</beat-type>\n")
+			sb.WriteString("        </time>\n")
+			sb.WriteString("        <clef>\n")
+			sb.WriteString("          <sign>G</sign>\n")
+			sb.WriteString("          <line>2</line>\n")
+			sb.WriteString("        </clef>\n")
+			sb.WriteString("      </attributes>\n")
+		}
+		measureOpened = true
+	}
+
+	writeMeasureEnd := func() {
+		if measureOpened {
+			sb.WriteString("    </measure>\n")
+			measureOpened = false
+		}
+	}
+
+	writeNote := func(n *db.SequenceNote, dur int, isTieStart, isTieStop bool) {
+		if !measureOpened {
+			writeMeasureStart(currentMeasureNum)
+		}
+		isRest := (n == nil || n.Pitch == "0" || n.Pitch == "" || n.Midi == 0)
+		noteType, isDotted := getNoteTypeAndDot(dur)
+
+		sb.WriteString("      <note>\n")
+		if isRest {
+			sb.WriteString("        <rest/>\n")
+		} else {
+			step, octave, alter := parsePitchComponents(n.Pitch, n.Midi)
+			sb.WriteString("        <pitch>\n")
+			fmt.Fprintf(sb, "          <step>%s</step>\n", step)
+			if alter != 0 {
+				fmt.Fprintf(sb, "          <alter>%d</alter>\n", alter)
+			}
+			fmt.Fprintf(sb, "          <octave>%d</octave>\n", octave)
+			sb.WriteString("        </pitch>\n")
+		}
+
+		fmt.Fprintf(sb, "        <duration>%d</duration>\n", dur)
+
+		if !isRest {
+			if isTieStop {
+				sb.WriteString("        <tie type=\"stop\"/>\n")
+				sb.WriteString("        <tied type=\"stop\"/>\n")
+			}
+			if isTieStart {
+				sb.WriteString("        <tie type=\"start\"/>\n")
+				sb.WriteString("        <tied type=\"start\"/>\n")
+			}
+		}
+
+		if noteType != "" {
+			fmt.Fprintf(sb, "        <type>%s</type>\n", noteType)
+		}
+		if isDotted {
+			sb.WriteString("        <dot/>\n")
+		}
+		sb.WriteString("      </note>\n")
+	}
+
+	writeMeasureStart(currentMeasureNum)
+
+	for i := range notes {
+		n := &notes[i]
+		totalDur := int(n.Duration)
+		if totalDur <= 0 {
+			continue
+		}
+
+		space := measureCapacity - currentMeasurePos
+		if totalDur <= space {
+			writeNote(n, totalDur, false, false)
+			currentMeasurePos += totalDur
+			if currentMeasurePos >= measureCapacity {
+				writeMeasureEnd()
+				currentMeasureNum++
+				currentMeasurePos = 0
+			}
+		} else {
+			firstDur := space
+			secondDur := totalDur - space
+
+			writeNote(n, firstDur, true, false)
+			writeMeasureEnd()
+
+			currentMeasureNum++
+			currentMeasurePos = 0
+
+			remTail := secondDur
+			for remTail > 0 {
+				durChunk := remTail
+				spaceChunk := measureCapacity - currentMeasurePos
+				if durChunk > spaceChunk {
+					durChunk = spaceChunk
+				}
+				isMore := (remTail-durChunk > 0)
+				writeNote(n, durChunk, isMore, true)
+				remTail -= durChunk
+				currentMeasurePos += durChunk
+				if currentMeasurePos >= measureCapacity {
+					writeMeasureEnd()
+					currentMeasureNum++
+					currentMeasurePos = 0
+				}
+			}
+		}
+	}
+
+	writeMeasureEnd()
+}
+
+// GenerateConsonantMusicXML creates a multi-voice MusicXML 4.0 score from consonant sonorities.
+func GenerateConsonantMusicXML(pieceTitle string, pieceSeq int, sonorities []ConsonantSonority) (string, error) {
+	if len(sonorities) == 0 {
+		return "", fmt.Errorf("no consonant sonorities provided for piece %d", pieceSeq)
+	}
+
+	// Sort sonorities by offset ascending
+	sortedSonorities := make([]ConsonantSonority, len(sonorities))
+	copy(sortedSonorities, sonorities)
+	slices.SortFunc(sortedSonorities, func(a, b ConsonantSonority) int {
+		if a.Offset != b.Offset {
+			return a.Offset - b.Offset
+		}
+		return a.Duration - b.Duration
+	})
+
+	// Collect unique voices and calculate total duration
+	voiceSet := make(map[int]bool)
+	totalDuration := 0
+	for _, s := range sortedSonorities {
+		for _, v := range s.Voices {
+			voiceSet[v] = true
+		}
+		if end := s.Offset + s.Duration; end > totalDuration {
+			totalDuration = end
+		}
+	}
+
+	var uniqueVoices []int
+	for v := range voiceSet {
+		uniqueVoices = append(uniqueVoices, v)
+	}
+	sort.Ints(uniqueVoices)
+	if len(uniqueVoices) == 0 {
+		return "", fmt.Errorf("no voices found in consonant sonorities for piece %d", pieceSeq)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n")
+	sb.WriteString("<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\">\n\n")
+	sb.WriteString("<score-partwise version=\"4.0\">\n")
+	sb.WriteString("  <work>\n")
+	if strings.TrimSpace(pieceTitle) == "" {
+		pieceTitle = fmt.Sprintf("Piece %d", pieceSeq)
+	}
+	fmt.Fprintf(&sb, "    <work-title>%s</work-title>\n", pieceTitle)
+	sb.WriteString("  </work>\n")
+	sb.WriteString("  <part-list>\n")
+
+	for _, v := range uniqueVoices {
+		partID := fmt.Sprintf("P%d", v)
+		partName := fmt.Sprintf("Voice %d", v)
+		fmt.Fprintf(&sb, "    <score-part id=\"%s\">\n", partID)
+		fmt.Fprintf(&sb, "      <part-name>%s</part-name>\n", partName)
+		sb.WriteString("    </score-part>\n")
+	}
+	sb.WriteString("  </part-list>\n")
+
+	for _, v := range uniqueVoices {
+		partID := fmt.Sprintf("P%d", v)
+		fmt.Fprintf(&sb, "  <part id=\"%s\">\n", partID)
+
+		// Build note stream for voice v
+		var voiceNotes []db.SequenceNote
+		currOffset := 0
+
+		for _, s := range sortedSonorities {
+			if s.Offset > currOffset {
+				gapDur := s.Offset - currOffset
+				voiceNotes = append(voiceNotes, db.SequenceNote{
+					Pitch:    "0",
+					Duration: float64(gapDur),
+					Midi:     0,
+					Toffset:  float64(currOffset),
+				})
+				currOffset = s.Offset
+			}
+
+			pitch := "0"
+			midi := 0
+			for idx, vID := range s.Voices {
+				if vID == v {
+					if idx < len(s.Pitches) {
+						pitch = s.Pitches[idx]
+					}
+					if idx < len(s.MidiValues) {
+						midi = s.MidiValues[idx]
+					}
+					break
+				}
+			}
+
+			if s.Duration > 0 {
+				voiceNotes = append(voiceNotes, db.SequenceNote{
+					Pitch:    pitch,
+					Duration: float64(s.Duration),
+					Midi:     midi,
+					Toffset:  float64(currOffset),
+				})
+				currOffset += s.Duration
+			}
+		}
+
+		if currOffset < totalDuration {
+			voiceNotes = append(voiceNotes, db.SequenceNote{
+				Pitch:    "0",
+				Duration: float64(totalDuration - currOffset),
+				Midi:     0,
+				Toffset:  float64(currOffset),
+			})
+		}
+
+		writePartMeasures(&sb, voiceNotes)
+		sb.WriteString("  </part>\n")
+	}
+
+	sb.WriteString("</score-partwise>\n")
+	return sb.String(), nil
+}
+
+// FetchConsonantSonorities queries the consonant table for a piece and returns sonorities sorted by offset.
+func FetchConsonantSonorities(ctx context.Context, database *db.DB, pieceSeq int) ([]ConsonantSonority, error) {
+	rows, err := database.Pool.Query(ctx, `
+		SELECT "offset", duration, pitches, midi_values, voices
+		FROM consonant
+		WHERE piece = $1
+		ORDER BY "offset"
+	`, pieceSeq)
+	if err != nil {
+		return nil, fmt.Errorf("query consonant table for piece %d: %w", pieceSeq, err)
+	}
+	defer rows.Close()
+
+	var sonorities []ConsonantSonority
+	for rows.Next() {
+		var s ConsonantSonority
+		if err := rows.Scan(&s.Offset, &s.Duration, &s.Pitches, &s.MidiValues, &s.Voices); err != nil {
+			return nil, fmt.Errorf("scan consonant row: %w", err)
+		}
+		sonorities = append(sonorities, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate consonant rows: %w", err)
+	}
+
+	return sonorities, nil
+}
+
+// ExportConsonantToMusicXML queries the consonant table for a piece and exports it to a MusicXML file.
+func ExportConsonantToMusicXML(ctx context.Context, database *db.DB, pieceSeq int, outFile string) error {
+	sonorities, err := FetchConsonantSonorities(ctx, database, pieceSeq)
+	if err != nil {
+		return err
+	}
+	if len(sonorities) == 0 {
+		return fmt.Errorf("no sonorities found in consonant table for piece %d", pieceSeq)
+	}
+
+	var pieceTitle string
+	_ = database.Pool.QueryRow(ctx, "SELECT title FROM pieces WHERE seq = $1", pieceSeq).Scan(&pieceTitle)
+	if strings.TrimSpace(pieceTitle) == "" {
+		pieceTitle = fmt.Sprintf("Piece %d", pieceSeq)
+	}
+
+	xmlContent, err := GenerateConsonantMusicXML(pieceTitle, pieceSeq, sonorities)
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(outFile)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+	}
+
+	if err := os.WriteFile(outFile, []byte(xmlContent), 0644); err != nil {
+		return fmt.Errorf("write musicxml file %s: %w", outFile, err)
+	}
+
+	return nil
+}
+
+// RunInteractiveSmooth prompts the user for piece.seq and output filename and exports consonant sonorities to MusicXML.
+func RunInteractiveSmooth(ctx context.Context, database *db.DB, reader *bufio.Reader) error {
+	pieceSeq, err := prompt.PromptInt(reader, "Enter piece ID (piece.seq)", 1)
+	if err != nil {
+		return err
+	}
+
+	var pieceTitle string
+	_ = database.Pool.QueryRow(ctx, "SELECT title FROM pieces WHERE seq = $1", pieceSeq).Scan(&pieceTitle)
+	cleanTitle := sanitizePieceTitle(pieceTitle)
+	if cleanTitle == "" {
+		cleanTitle = fmt.Sprintf("Piece_%d", pieceSeq)
+	}
+	defaultOutFile := fmt.Sprintf("%s_smooth.musicxml", cleanTitle)
+
+	outFile, err := prompt.PromptString(reader, "Enter output MusicXML filename", defaultOutFile)
+	if err != nil {
+		return err
+	}
+
+	if err := ExportConsonantToMusicXML(ctx, database, pieceSeq, outFile); err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully exported smoothed MusicXML for piece %d to %s\n", pieceSeq, outFile)
 	return nil
 }

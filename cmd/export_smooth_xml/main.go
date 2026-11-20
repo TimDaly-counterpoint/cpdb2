@@ -37,7 +37,7 @@ func main() {
 
 	fmt.Printf("Connected to database: %s\n", dbArg)
 
-	if err := exportxml.RunInteractive(ctx, database, reader, "patterns.txt"); err != nil {
+	if err := exportxml.RunInteractiveSmooth(ctx, database, reader); err != nil {
 		log.Fatalf("Export smooth XML error: %v", err)
 	}
 }

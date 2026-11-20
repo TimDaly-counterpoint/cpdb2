@@ -5,14 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"cpdb2/pkg/db"
 	"cpdb2/pkg/music"
+	"github.com/jackc/pgx/v5"
 )
 
 var ErrDuplicatePiece = errors.New("duplicate piece")
@@ -20,7 +21,8 @@ var ErrDuplicatePiece = errors.New("duplicate piece")
 // NoteValue holds extracted note data ready for database insertion.
 type NoteValue struct {
 	Piece       int
-	Staff       int
+	Mvt         int
+	StaffChange int
 	Voice       int
 	Pitch       string
 	Duration    float64
@@ -29,7 +31,6 @@ type NoteValue struct {
 	Index       int
 	Bar         int
 	DimLevel    int
-	StaffChange int
 	Inflec      int
 	Ficta       int
 	Colour      bool
@@ -199,6 +200,7 @@ func ExtractNotes(ctx context.Context, score *Score, database *db.DB) ([]NoteVal
 			for _, element := range measure.Elements {
 				var noteValues NoteValue
 				noteValues.Piece = piece
+				noteValues.Mvt = 1
 				noteValues.StaffChange = staffType
 				noteValues.Voice = voice + 1
 
@@ -429,16 +431,29 @@ func ImportScores(ctx context.Context, database *db.DB, patterns ...string) (int
 		if len(notes) > 0 && database != nil {
 			var rows [][]any
 			for _, n := range notes {
+				var staffChange any
+				if n.StaffChange > 0 {
+					staffChange = n.StaffChange
+				}
+				mvt := n.Mvt
+				if mvt == 0 {
+					mvt = 1
+				}
 				rows = append(rows, []any{
 					n.Piece,
-					n.Staff,
+					mvt,
+					staffChange,
 					n.Voice,
-					n.Pitch,
-					n.Duration,
-					n.Midi,
-					n.Toffset,
 					n.Index,
+					n.Pitch,
+					int(math.Round(n.Duration)),
+					n.Midi,
+					n.Inflec,
+					n.Ficta,
+					n.Colour,
 					n.Bar,
+					n.IsLast,
+					int(math.Round(n.Toffset)),
 					n.DimLevel,
 				})
 			}

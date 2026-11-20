@@ -13,18 +13,23 @@ import (
 
 // NoteEntry represents a single note or rest row in the database.
 type NoteEntry struct {
-	Seq       int
-	Piece     int
-	Staff     int
-	Voice     int
-	Pitch     string
-	Duration  float64
-	Midi      int
-	Toffset   float64
-	Index     int
-	Bar       int
-	DimLevel  int
-	CreatedAt string
+	Seq         int
+	Piece       int
+	Mvt         int
+	StaffChange int
+	Voice       int
+	Pitch       string
+	Duration    float64
+	Midi        int
+	Toffset     float64
+	Index       int
+	Bar         int
+	DimLevel    int
+	Inflec      int
+	Ficta       int
+	Colour      bool
+	IsLast      int
+	CreatedAt   string
 }
 
 // SequenceNote holds note data retrieved for sequence export or analysis.
@@ -240,12 +245,12 @@ func (d *DB) InsertPiece(ctx context.Context, composer, title string, voices int
 	return pieceSeq, nil
 }
 
-// InsertStaff inserts a staff and returns its seq id.
-func (d *DB) InsertStaff(ctx context.Context, pieceSeq, staffNum, voiceNum int) (int, error) {
+// InsertStaff inserts a staff configuration and returns its seq id.
+func (d *DB) InsertStaff(ctx context.Context, key, num, denom *int, clef *string) (int, error) {
 	var staffSeq int
 	err := d.Pool.QueryRow(ctx,
-		"INSERT INTO staves (piece, staff, voice) VALUES ($1, $2, $3) RETURNING seq",
-		pieceSeq, staffNum, voiceNum).Scan(&staffSeq)
+		"INSERT INTO staves (key, num, denom, clef) VALUES ($1, $2, $3, $4) RETURNING seq",
+		key, num, denom, clef).Scan(&staffSeq)
 	if err != nil {
 		return 0, fmt.Errorf("insert staff: %w", err)
 	}
@@ -260,7 +265,7 @@ func (d *DB) CopyNotes(ctx context.Context, notes [][]any) (int64, error) {
 	return d.Pool.CopyFrom(
 		ctx,
 		pgx.Identifier{"notes"},
-		[]string{"piece", "staff", "voice", "pitch", "duration", "midi", "toffset", "index", "bar", "dimlevel"},
+		[]string{"piece", "mvt", "staffchange", "voice", "index", "pitch", "duration", "midi", "inflec", "ficta", "colour", "bar", "islast", "toffset", "dimlevel"},
 		pgx.CopyFromRows(notes),
 	)
 }

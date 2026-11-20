@@ -18,7 +18,7 @@ The project separates the monolith into focused, reusable packages in `pkg/` and
 - **`pkg/tritones`**: Identification of tritone occurrences in dissonant sonorities.
 - **`pkg/smooth`**: Resolution and smoothing of dissonance passages.
 - **`pkg/exportxml`**: Sequence results parser and MusicXML 4.0 score generator.
-- **`pkg/sonority`**: Vertical sonority intervals, overlap durations, percentage distributions, and CSV export.
+- **`pkg/sonority`**: Recreation and population of `sonority`, `dissonance`, and smoothed `consonant` tables across all pieces.
 - **`pkg/setdb`**: Database setup tool that validates empty databases, imports database schema from `template.sql`, and populates the `voces` table from `voces.sql`.
 - **`pkg/installtools`**: Tool compiler and asset staging utility that builds all CLI tools into the `tools/` folder alongside necessary SQL and documentation assets.
 
@@ -44,11 +44,11 @@ Each program then interactively prompts for any additional required parameters:
 | **`disstable`** | `go run ./cmd/disstable bcz` | Prompts for source view and target table names; recreates `disstable` with bar calculation. This is away of avoiding the very slow sonority_view and sonority_dissonance_view. To be replaced by a utility function to recreate these as tables|
 | **`find_tritones`** | `go run ./cmd/find_tritones bcz` | Prompts for piece identity; lists offsets of tritones within dissonant sonorities. |
 | **`smoothcp`** | `go run ./cmd/smoothcp bcz` | Prompts for piece identity; smooths dissonance passages and saves to `smoothcp_<piece>`. Amend to create table, dump table to file and drop table |
-| **`export_smooth_xml`** | `go run ./cmd/export_smooth_xml bcz` | Prompts for smoothed table / sequence file and output directory; exports to MusicXML 4.0. |
+| **`export_smooth_xml`** | `go run ./cmd/export_smooth_xml bcz` | Prompts for piece ID and output filename; exports smoothed consonant sonorities to MusicXML 4.0. |
 | **`export_sequences`** | `go run ./cmd/export_sequences bcz` | Prompts for sequence result text file and output directory; generates multi-voice MusicXML 4.0 scores. |
 | **`set_db`** | `go run ./cmd/set_db dbname` | Validates that `dbname` exists and is empty, imports `template.sql`, and populates `voces` from `voces.sql`.  Expects a running postgresql database with the named database created but empty, along with the database user 'goclient' and password specified in /pkg/db.go. Parameters can be edited there|
 | **`install_tools`** | `go run ./cmd/install_tools` | Compiles all tools into the `tools/` directory and copies `template.sql`, `voces.sql`, and `README.md`. Tools can then be used directly from the command line. |
-| **`process_sonority`** | `go run ./cmd/process_sonority bcz` | Prompts for piece ID, voices, and output CSV; calculates vertical sonorities and percentage distribution. |
+| **`process_sonority`** | `go run ./cmd/process_sonority bcz` | Recreates and populates `sonority`, `dissonance`, and `consonant` tables for all pieces in the database. |
 | **`cpdb2`** | `go run ./cmd/cpdb2 bcz` | Master interactive CLI menu providing access to all 12 functions. |
 
 ## Running Tests

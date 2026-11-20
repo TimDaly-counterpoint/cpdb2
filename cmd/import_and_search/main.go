@@ -66,12 +66,12 @@ func main() {
 
 	// Step 2: Search Sequences
 	fmt.Println("\n--- Step 2: Search for Sequences ---")
-	pieces, err := prompt.PromptIntList(reader, "Enter piece IDs (comma-separated, empty for all)")
+	pieces, err := prompt.PromptIntList(reader, "Enter piece IDs (comma-separated or ranges e.g. 1-3, empty for all)")
 	if err != nil {
 		log.Fatalf("Invalid piece IDs: %v", err)
 	}
 
-	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated, empty for all)")
+	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 	if err != nil {
 		log.Fatalf("Invalid voice numbers: %v", err)
 	}
