@@ -14,6 +14,14 @@ import (
 	"cpdb2/pkg/db"
 	"cpdb2/pkg/music"
 	"cpdb2/pkg/prompt"
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	// VersionFlorid specifies analysis of the florid version (from sonority table).
+	VersionFlorid = "f"
+	// VersionConsonant specifies analysis of the smoothed consonant version (from consonant table).
+	VersionConsonant = "c"
 )
 
 // MelodicNote represents a sounding note with its melodic interval relative to the first note in the voice.
@@ -37,6 +45,7 @@ type VoiceDifference struct {
 // Result contains the analysis result from ProcessCMatrix.
 type Result struct {
 	Piece          int
+	Version        string
 	Voices         []int
 	VoiceNotes     map[int][]MelodicNote
 	Differences    []VoiceDifference
@@ -47,11 +56,22 @@ type Result struct {
 
 // CalculateVoiceIntervals converts a sequence of note entries for a single voice into melodic intervals.
 func CalculateVoiceIntervals(notes []db.SequenceNote) []MelodicNote {
+	return CalculateVoiceIntervalsWithBarStarts(notes, nil)
+}
+
+// CalculateVoiceIntervalsWithBarStarts converts a sequence of note entries for a single voice into melodic intervals,
+// using the provided bar start offsets mapping if available.
+func CalculateVoiceIntervalsWithBarStarts(notes []db.SequenceNote, customBarStarts map[int]float64) []MelodicNote {
 	var melodicNotes []MelodicNote
 	var firstPitch string
 	hasSoundingNote := false
 
 	barStartOffsets := make(map[int]float64)
+	if customBarStarts != nil {
+		for k, v := range customBarStarts {
+			barStartOffsets[k] = v
+		}
+	}
 	for _, n := range notes {
 		if _, exists := barStartOffsets[n.Bar]; !exists {
 			barStartOffsets[n.Bar] = n.Toffset
@@ -333,39 +353,229 @@ func WriteIntervalMatrixCSV(filename string, matrix [][]string) (err error) {
 	return nil
 }
 
-// ProcessCMatrix runs the interval extraction, difference checking, and CSV generation for a piece and voices.
-func ProcessCMatrix(ctx context.Context, database *db.DB, piece int, voices []int, customCSVFile string) (*Result, error) {
-	if len(voices) == 0 {
-		// Discover voices for this piece
-		rows, err := database.Pool.Query(ctx, "SELECT DISTINCT voice FROM notes WHERE piece = $1 ORDER BY voice", piece)
-		if err != nil {
-			return nil, fmt.Errorf("query voices: %w", err)
+// SonorityRow represents a vertical slice row from sonority or consonant table.
+type SonorityRow struct {
+	Offset     int
+	Duration   int
+	Pitches    []string
+	MidiValues []int
+	Voices     []int
+}
+
+// FetchPieceBars retrieves bar start offsets from notes table for a piece.
+func FetchPieceBars(ctx context.Context, database *db.DB, piece int) (map[int]float64, []int, error) {
+	rows, err := database.Pool.Query(ctx, "SELECT bar, MIN(toffset) FROM notes WHERE piece = $1 GROUP BY bar ORDER BY MIN(toffset), bar", piece)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query bars for piece %d: %w", piece, err)
+	}
+	defer rows.Close()
+
+	barStarts := make(map[int]float64)
+	var barOrder []int
+	for rows.Next() {
+		var bar int
+		var start float64
+		if err := rows.Scan(&bar, &start); err != nil {
+			return nil, nil, fmt.Errorf("scan bar: %w", err)
 		}
-		for rows.Next() {
-			var v int
-			if err := rows.Scan(&v); err == nil {
-				voices = append(voices, v)
+		barStarts[bar] = start
+		barOrder = append(barOrder, bar)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate bars: %w", err)
+	}
+	return barStarts, barOrder, nil
+}
+
+func getBarForOffset(offset float64, barStarts map[int]float64, barOrder []int) (int, float64) {
+	if len(barOrder) == 0 {
+		return 1, offset
+	}
+	selectedBar := barOrder[0]
+	for _, b := range barOrder {
+		if barStarts[b] <= offset {
+			selectedBar = b
+		} else {
+			break
+		}
+	}
+	return selectedBar, offset - barStarts[selectedBar]
+}
+
+// FetchSonorityRows retrieves all sonority/consonant slices for a piece from the specified table.
+func FetchSonorityRows(ctx context.Context, database *db.DB, tableName string, piece int) ([]SonorityRow, error) {
+	query := fmt.Sprintf(`
+		SELECT "offset", duration, pitches, midi_values, voices
+		FROM public.%s
+		WHERE piece = $1
+		ORDER BY "offset"
+	`, pgx.Identifier{tableName}.Sanitize())
+
+	rows, err := database.Pool.Query(ctx, query, piece)
+	if err != nil {
+		return nil, fmt.Errorf("query table %q for piece %d: %w", tableName, piece, err)
+	}
+	defer rows.Close()
+
+	var sonRows []SonorityRow
+	for rows.Next() {
+		var r SonorityRow
+		if err := rows.Scan(&r.Offset, &r.Duration, &r.Pitches, &r.MidiValues, &r.Voices); err != nil {
+			return nil, fmt.Errorf("scan %s row: %w", tableName, err)
+		}
+		sonRows = append(sonRows, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s rows: %w", tableName, err)
+	}
+	return sonRows, nil
+}
+
+// BuildVoiceNotesFromSonorities extracts sequence notes for a specific voice from sonority/consonant rows.
+func BuildVoiceNotesFromSonorities(sonRows []SonorityRow, voice int, barStarts map[int]float64, barOrder []int) []db.SequenceNote {
+	var rawNotes []db.SequenceNote
+	currOffset := 0
+
+	for _, s := range sonRows {
+		if s.Offset > currOffset {
+			gapDur := s.Offset - currOffset
+			bar, _ := getBarForOffset(float64(currOffset), barStarts, barOrder)
+			rawNotes = append(rawNotes, db.SequenceNote{
+				Voice:    voice,
+				Bar:      bar,
+				Pitch:    "0",
+				Duration: float64(gapDur),
+				Midi:     0,
+				Toffset:  float64(currOffset),
+			})
+			currOffset = s.Offset
+		}
+
+		pitch := "0"
+		midi := 0
+		for idx, vID := range s.Voices {
+			if vID == voice {
+				if idx < len(s.Pitches) {
+					pitch = s.Pitches[idx]
+				}
+				if idx < len(s.MidiValues) {
+					midi = s.MidiValues[idx]
+				}
+				break
 			}
 		}
-		rows.Close()
+
+		if s.Duration > 0 {
+			bar, _ := getBarForOffset(float64(currOffset), barStarts, barOrder)
+			rawNotes = append(rawNotes, db.SequenceNote{
+				Voice:    voice,
+				Bar:      bar,
+				Pitch:    pitch,
+				Duration: float64(s.Duration),
+				Midi:     midi,
+				Toffset:  float64(currOffset),
+			})
+			currOffset += s.Duration
+		}
+	}
+
+	// Merge contiguous notes of identical pitch in the voice
+	var mergedNotes []db.SequenceNote
+	for _, n := range rawNotes {
+		if len(mergedNotes) > 0 {
+			last := &mergedNotes[len(mergedNotes)-1]
+			if last.Pitch == n.Pitch && (last.Toffset+last.Duration) == n.Toffset {
+				last.Duration += n.Duration
+				continue
+			}
+		}
+		mergedNotes = append(mergedNotes, n)
+	}
+
+	// Assign sequential 1-based index to notes
+	for i := range mergedNotes {
+		mergedNotes[i].Index = i + 1
+	}
+
+	return mergedNotes
+}
+
+// ProcessCMatrix runs the interval extraction, difference checking, and CSV generation for a piece and voices.
+// The version parameter specifies either florid (VersionFlorid / "f", built from sonority table) or
+// consonant (VersionConsonant / "c", built from consonant table).
+func ProcessCMatrix(ctx context.Context, database *db.DB, piece int, voices []int, version string, customCSVFile string) (*Result, error) {
+	normVersion := strings.ToLower(strings.TrimSpace(version))
+	var tableName string
+	var resolvedVersion string
+	if normVersion == "" || normVersion == VersionFlorid || normVersion == "florid" {
+		tableName = "sonority"
+		resolvedVersion = VersionFlorid
+	} else if normVersion == VersionConsonant || normVersion == "consonant" {
+		tableName = "consonant"
+		resolvedVersion = VersionConsonant
+	} else {
+		return nil, fmt.Errorf("invalid version %q (must be 'f' for florid or 'c' for consonant)", version)
 	}
 
 	if len(voices) == 0 {
-		return nil, fmt.Errorf("at least one voice must be specified for piece %d", piece)
+		// Discover voices for this piece from the selected table
+		rows, err := database.Pool.Query(ctx, fmt.Sprintf(`
+			SELECT DISTINCT unnest(voices) AS v
+			FROM public.%s
+			WHERE piece = $1
+			ORDER BY v
+		`, pgx.Identifier{tableName}.Sanitize()), piece)
+		if err == nil {
+			for rows.Next() {
+				var v int
+				if err := rows.Scan(&v); err == nil {
+					voices = append(voices, v)
+				}
+			}
+			rows.Close()
+		}
+
+		if len(voices) == 0 {
+			// Fallback to notes table
+			rows, err := database.Pool.Query(ctx, "SELECT DISTINCT voice FROM notes WHERE piece = $1 ORDER BY voice", piece)
+			if err == nil {
+				for rows.Next() {
+					var v int
+					if err := rows.Scan(&v); err == nil {
+						voices = append(voices, v)
+					}
+				}
+				rows.Close()
+			}
+		}
+	}
+
+	if len(voices) == 0 {
+		return nil, fmt.Errorf("no voices found for piece %d in table %q", piece, tableName)
 	}
 
 	voiceOrder := slices.Clone(voices)
 	slices.Sort(voiceOrder)
 	voiceOrder = slices.Compact(voiceOrder)
 
-	rawNotes, err := database.FetchNotesForVoices(ctx, piece, voiceOrder)
+	barStarts, barOrder, err := FetchPieceBars(ctx, database, piece)
 	if err != nil {
-		return nil, fmt.Errorf("fetch notes: %w", err)
+		barStarts = make(map[int]float64)
+		barOrder = nil
+	}
+
+	sonRows, err := FetchSonorityRows(ctx, database, tableName, piece)
+	if err != nil {
+		return nil, err
+	}
+	if len(sonRows) == 0 {
+		return nil, fmt.Errorf("no records found in table %q for piece %d", tableName, piece)
 	}
 
 	voiceMelodicNotes := make(map[int][]MelodicNote)
 	for _, v := range voiceOrder {
-		voiceMelodicNotes[v] = CalculateVoiceIntervals(rawNotes[v])
+		voiceNotes := BuildVoiceNotesFromSonorities(sonRows, v, barStarts, barOrder)
+		voiceMelodicNotes[v] = CalculateVoiceIntervalsWithBarStarts(voiceNotes, barStarts)
 	}
 
 	diffs := FindVoiceDifferences(voiceMelodicNotes, voiceOrder)
@@ -383,6 +593,7 @@ func ProcessCMatrix(ctx context.Context, database *db.DB, piece int, voices []in
 
 	return &Result{
 		Piece:          piece,
+		Version:        resolvedVersion,
 		Voices:         voiceOrder,
 		VoiceNotes:     voiceMelodicNotes,
 		Differences:    diffs,
@@ -399,6 +610,20 @@ func RunInteractive(ctx context.Context, database *db.DB, reader *bufio.Reader) 
 		return err
 	}
 
+	versionStr, err := prompt.PromptString(reader, "Apply process to florid (f) or consonant (c) version", "f")
+	if err != nil {
+		return err
+	}
+	versionStr = strings.ToLower(strings.TrimSpace(versionStr))
+	var version string
+	if versionStr == "f" || versionStr == "florid" || versionStr == "" {
+		version = VersionFlorid
+	} else if versionStr == "c" || versionStr == "consonant" {
+		version = VersionConsonant
+	} else {
+		return fmt.Errorf("invalid version %q (must be 'f' for florid or 'c' for consonant)", versionStr)
+	}
+
 	voices, err := prompt.PromptIntList(reader, "Enter voice numbers (comma-separated or ranges e.g. 1-3, empty for all)")
 	if err != nil {
 		return err
@@ -409,7 +634,7 @@ func RunInteractive(ctx context.Context, database *db.DB, reader *bufio.Reader) 
 		return err
 	}
 
-	res, err := ProcessCMatrix(ctx, database, piece, voices, csvFile)
+	res, err := ProcessCMatrix(ctx, database, piece, voices, version, csvFile)
 	if err != nil {
 		return err
 	}

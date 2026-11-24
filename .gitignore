@@ -11,3 +11,7 @@
 .env
 .vscode/
 .idea/
+
+# In-folder compiled tools and other working files
+.tools/
+.xmlseq/

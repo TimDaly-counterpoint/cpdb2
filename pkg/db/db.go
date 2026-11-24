@@ -90,7 +90,7 @@ func ResolveConnString(dbArg string) string {
 		pass = os.Getenv("PGPASSWORD")
 	}
 	if pass == "" {
-		pass = "gopherz"
+		pass = "wordpass"
 	}
 
 	host := os.Getenv("DATABASE_HOST")

@@ -7,17 +7,54 @@ import (
 
 	"cpdb2/pkg/db"
 	"cpdb2/pkg/prompt"
+	"github.com/jackc/pgx/v5"
 )
 
-// FindTritones finds and returns offsets with tritones in dissonant sonorities for a piece.
+const (
+	// DefaultTableName is the standard table queried for dissonant sonorities.
+	DefaultTableName = "dissonance"
+	// FallbackTableName is an alternative table name if named dissonant.
+	FallbackTableName = "dissonant"
+)
+
+// ResolveDissonanceTable determines whether the dissonance or dissonant table is present in the database.
+func ResolveDissonanceTable(ctx context.Context, database *db.DB) string {
+	var exists bool
+	err := database.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'dissonance')").Scan(&exists)
+	if err == nil && exists {
+		return DefaultTableName
+	}
+	var dissExists bool
+	err = database.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'dissonant')").Scan(&dissExists)
+	if err == nil && dissExists {
+		return FallbackTableName
+	}
+	return DefaultTableName
+}
+
+// FindTritones finds and returns offsets with tritones in dissonant sonorities for a piece from the dissonance table.
 func FindTritones(ctx context.Context, database *db.DB, piece int) ([]float64, error) {
-	rows, err := database.Pool.Query(ctx, `
+	return FindTritonesFromTable(ctx, database, piece, "")
+}
+
+// FindTritonesFromTable finds and returns offsets with tritones in dissonant sonorities for a piece from the specified table.
+// If customTable is empty, it resolves the dissonance/dissonant table automatically.
+func FindTritonesFromTable(ctx context.Context, database *db.DB, piece int, customTable string) ([]float64, error) {
+	tableName := customTable
+	if tableName == "" {
+		tableName = ResolveDissonanceTable(ctx, database)
+	}
+
+	query := fmt.Sprintf(`
 		SELECT "offset", midi_values
-		FROM disstable
+		FROM public.%s
 		WHERE piece = $1 AND midi_dissonant = true
-	`, piece)
+		ORDER BY "offset"
+	`, pgx.Identifier{tableName}.Sanitize())
+
+	rows, err := database.Pool.Query(ctx, query, piece)
 	if err != nil {
-		return nil, fmt.Errorf("query dissonant MIDI values for piece %d: %w", piece, err)
+		return nil, fmt.Errorf("query dissonant MIDI values for piece %d from %s: %w", piece, tableName, err)
 	}
 	defer rows.Close()
 

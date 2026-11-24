@@ -57,7 +57,7 @@ func FindSQLFile(filename string) (string, error) {
 }
 
 // SetDB connects to the named database, validates that it exists and is empty,
-// imports the schema from template.sql, and populates the voces table from voces.sql.
+// imports the schema from template.sql, and populates the voces and intervala tables from voces.sql.
 func SetDB(ctx context.Context, dbName string) error {
 	trimmed := strings.TrimSpace(dbName)
 	if trimmed == "" {
@@ -96,7 +96,7 @@ func SetDB(ctx context.Context, dbName string) error {
 		return fmt.Errorf("database %q is not empty: contains %d existing table(s) in public schema", trimmed, tableCount)
 	}
 
-	// 3. Import schema from template.sql and populate voces from voces.sql
+	// 3. Import schema from template.sql and populate voces and intervala from voces.sql
 	connStr := db.ResolveConnString(trimmed)
 
 	cmdTemplate := exec.CommandContext(ctx, "psql", connStr, "-v", "ON_ERROR_STOP=1", "-f", templatePath)
@@ -120,7 +120,17 @@ func SetDB(ctx context.Context, dbName string) error {
 		return fmt.Errorf("voces table was not populated (0 rows found)")
 	}
 
-	fmt.Printf("Database %q successfully initialized with %d voces records.\n", trimmed, vocesCount)
+	// 5. Verify intervala table population
+	var intervalaCount int
+	err = database.Pool.QueryRow(ctx, "SELECT count(*) FROM public.intervala").Scan(&intervalaCount)
+	if err != nil {
+		return fmt.Errorf("failed to verify intervala table in database %q: %w", trimmed, err)
+	}
+	if intervalaCount == 0 {
+		return fmt.Errorf("intervala table was not populated (0 rows found)")
+	}
+
+	fmt.Printf("Database %q successfully initialized with %d voces and %d intervala records.\n", trimmed, vocesCount, intervalaCount)
 	return nil
 }
 

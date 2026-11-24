@@ -43,5 +43,5 @@ The following binaries are built and placed in `tools/`:
 - **`process_sonority`**: Recreates and populates `sonority`, `dissonance`, and `consonant` tables for all pieces in the database.
 - **`search_cross_piece`**: Cross-piece melodic pattern and sequence search.
 - **`search_sequences`**: Corpus-wide repeated melodic sequence search.
-- **`set_db`**: Automated empty database setup, schema import (`template.sql`), and `voces` table population (`voces.sql`).
+- **`set_db`**: Automated empty database setup, schema import (`template.sql`), and `voces` and `intervala` table population (`voces.sql`).
 - **`smoothcp`**: Resolution and smoothing of dissonance passages.

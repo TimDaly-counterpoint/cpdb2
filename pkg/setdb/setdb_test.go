@@ -68,6 +68,29 @@ func TestSetDB_Integration(t *testing.T) {
 		t.Fatalf("SetDB on empty database failed: %v", err)
 	}
 
+	// Verify table population
+	database, err := db.NewDB(ctx, testDBName)
+	if err != nil {
+		t.Fatalf("failed to connect to test db: %v", err)
+	}
+	defer database.Close()
+
+	var vocesCount int
+	if err := database.Pool.QueryRow(ctx, "SELECT count(*) FROM public.voces").Scan(&vocesCount); err != nil {
+		t.Fatalf("failed to query voces count: %v", err)
+	}
+	if vocesCount != 30 {
+		t.Errorf("expected 30 voces rows, got %d", vocesCount)
+	}
+
+	var intervalaCount int
+	if err := database.Pool.QueryRow(ctx, "SELECT count(*) FROM public.intervala").Scan(&intervalaCount); err != nil {
+		t.Fatalf("failed to query intervala count: %v", err)
+	}
+	if intervalaCount != 25 {
+		t.Errorf("expected 25 intervala rows, got %d", intervalaCount)
+	}
+
 	// 2. Second run on non-empty DB should return error
 	if err := SetDB(ctx, testDBName); err == nil {
 		t.Fatalf("expected error when running SetDB on non-empty database, got nil")
