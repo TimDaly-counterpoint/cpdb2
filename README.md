@@ -39,7 +39,7 @@ Each program then interactively prompts for any additional required parameters:
 | **`import_scores`** | `go run ./cmd/import_scores bcz` | Prompts for input score files / glob patterns (`.musicxml`, `.xml`, `.mei`, `.ly`) and imports them into the database. Typical response to prompt is './input/*' which will take all files within the local 'input' folder with .xml, .musicxml, .mei and .ly endings and import. Error handling for non-musical xml files to be added.|
 | **`search_sequences`** | `go run ./cmd/search_sequences bcz` | Prompts for piece IDs, voice numbers, min sequence length, min occurrences, exclusion options, and output filename; finds all maximal melodic substrings with minimum specified length and frequence across all listed pieces. Comma-separated piece numbers, with ranges indicated by e.g. 24-27.|
 | **`search_cross_piece`** | `go run ./cmd/search_cross_piece bcz` | Prompts for source piece ID, target piece IDs, voice numbers, min length, and output filename; takes a single piece from the corpus and looks for quotations from that piece only within the other specified pieces. Special case of previous tool.|
-| **`import_and_search`** | `go run ./cmd/import_and_search bcz` | Combined workflow: prompts for score files to import and immediately launches sequence search. Check - needs updating or removal|
+| **`import_and_search`** | `go run ./cmd/import_and_search bcz` | To be removed.|
 | **`cmatrix`** | `go run ./cmd/cmatrix bcz` | Prompts for piece ID, florid (f) / consonant (c) version, voice numbers, and CSV filename; outputs a consonance map over time within the given selection. Example provided.|
 | **`disstable`** | `go run ./cmd/disstable bcz` | Redundant; to be deleted.|
 | **`find_tritones`** | `go run ./cmd/find_tritones bcz` | Prompts for piece identity; lists offsets of tritones within dissonant sonorities. |
@@ -52,7 +52,7 @@ Each program then interactively prompts for any additional required parameters:
 | **`cpdb2`** | `go run ./cmd/cpdb2 bcz` | Master interactive CLI menu providing access to all 12 functions. |
 
 
-Refinements to options to musicxml output to come.
+Refinements to options for musicxml output to come.
 
 The intervala table represents a summary of De arte contrapuncti Book 1. Moving forward, the aim is to apply this to the consonant table to determine the contrapuntal plausibility of different voice pairs.
 
